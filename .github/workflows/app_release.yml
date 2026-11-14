@@ -66,6 +66,10 @@ jobs:
           ls -lh release.jks
           file release.jks
 
+      # gradlew loses its executable bit when uploaded through GitHub's web UI
+      - name: Make gradlew executable
+        run: chmod +x gradlew
+
       - name: Build Unsigned Release APK
         run: ./gradlew assembleRelease --stacktrace
 
