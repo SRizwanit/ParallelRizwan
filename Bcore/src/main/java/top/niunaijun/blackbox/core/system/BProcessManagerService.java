@@ -4,6 +4,7 @@ import android.app.ActivityManager;
 import android.content.Context;
 import android.content.pm.ApplicationInfo;
 import android.os.Binder;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.IBinder;
 import android.os.Process;
@@ -63,14 +64,83 @@ public class BProcessManagerService implements ISystemService {
                 try {
                     // give the app's own crash report (if any) time to show first
                     Thread.sleep(1500);
+                    String reason = "অ্যাপ হঠাৎ বন্ধ হয়ে গেছে";
+                    String exitInfo = null;
+                    // Android 11+: ask the OS for the REAL exit reason (native crash / signal / self exit / low memory ...)
+                    for (int i = 0; i < 4 && exitInfo == null; i++) {
+                        exitInfo = queryExitReason(pid);
+                        if (exitInfo == null) Thread.sleep(700);
+                    }
                     String detail = "প্রসেস চালুর " + (lived / 1000) + " সেকেন্ডের মধ্যেই বন্ধ হয়ে গেছে।\n"
+                            + (exitInfo != null ? "আসল কারণ (OS): " + exitInfo + "\n"
+                            : "আসল কারণ জানা যায়নি (Android 11-এর নিচে, বা OS তথ্য দেয়নি)।\n")
                             + BlackScreenWatchdog.memoryInfo();
+                    Slog.w(TAG, "early death pid=" + pid + " pkg=" + app.getPackageName() + " : " + detail);
                     AppFailureNotifier.reportIfNotShown(BlackBoxCore.getContext(), app.getPackageName(),
-                            app.userId, pid, "অ্যাপ হঠাৎ বন্ধ হয়ে গেছে (নেটিভ ক্র্যাশ বা RAM কম)", detail);
+                            app.userId, pid, reason, detail);
                 } catch (Throwable ignored) {
                 }
             }
         }, "bb-early-death").start();
+    }
+
+    /** Returns a human-readable exit reason for the host process with this pid, or null. */
+    private static String queryExitReason(int pid) {
+        if (Build.VERSION.SDK_INT < 30) return null;
+        try {
+            Context c = BlackBoxCore.getContext();
+            ActivityManager am = (ActivityManager) c.getSystemService(Context.ACTIVITY_SERVICE);
+            List<android.app.ApplicationExitInfo> list =
+                    am.getHistoricalProcessExitReasons(c.getPackageName(), pid, 1);
+            if (list == null || list.isEmpty()) return null;
+            android.app.ApplicationExitInfo e = list.get(0);
+            if (e.getPid() != pid) return null;
+            String name;
+            String hint = "";
+            int st = e.getStatus();
+            switch (e.getReason()) {
+                case android.app.ApplicationExitInfo.REASON_CRASH_NATIVE:
+                    name = "CRASH_NATIVE (নেটিভ ক্র্যাশ)";
+                    hint = " signal=" + st + (st == 11 ? " (SIGSEGV)" : st == 6 ? " (SIGABRT)" : st == 4 ? " (SIGILL)" : st == 7 ? " (SIGBUS)" : "");
+                    break;
+                case android.app.ApplicationExitInfo.REASON_CRASH:
+                    name = "CRASH (Java Exception)";
+                    break;
+                case android.app.ApplicationExitInfo.REASON_SIGNALED:
+                    name = "SIGNALED (কেউ signal পাঠিয়ে মেরেছে)";
+                    hint = " signal=" + st + (st == 9 ? " (SIGKILL)" : st == 31 ? " (SIGSYS/seccomp)" : "");
+                    break;
+                case android.app.ApplicationExitInfo.REASON_EXIT_SELF:
+                    name = "EXIT_SELF (অ্যাপ নিজেই exit করেছে)";
+                    hint = " exitCode=" + st;
+                    break;
+                case android.app.ApplicationExitInfo.REASON_LOW_MEMORY:
+                    name = "LOW_MEMORY (সিস্টেম RAM-এর জন্য মেরেছে)";
+                    break;
+                case android.app.ApplicationExitInfo.REASON_ANR:
+                    name = "ANR (সাড়া দেয়নি)";
+                    break;
+                case android.app.ApplicationExitInfo.REASON_INITIALIZATION_FAILURE:
+                    name = "INITIALIZATION_FAILURE";
+                    break;
+                case android.app.ApplicationExitInfo.REASON_PERMISSION_CHANGE:
+                    name = "PERMISSION_CHANGE";
+                    break;
+                case android.app.ApplicationExitInfo.REASON_EXCESSIVE_RESOURCE_USAGE:
+                    name = "EXCESSIVE_RESOURCE_USAGE";
+                    break;
+                case android.app.ApplicationExitInfo.REASON_USER_REQUESTED:
+                    name = "USER_REQUESTED";
+                    break;
+                default:
+                    name = "reason#" + e.getReason();
+            }
+            String desc = e.getDescription();
+            return name + hint + (desc != null && !desc.isEmpty() ? " | " + desc : "")
+                    + " | RSS=" + (e.getRss() / 1024) + "MB";
+        } catch (Throwable t) {
+            return null;
+        }
     }
 
     public static final String TAG = "BProcessManager";

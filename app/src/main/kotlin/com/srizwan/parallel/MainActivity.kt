@@ -35,9 +35,11 @@ class MainActivity : Activity() {
     private lateinit var list: LinearLayout
     private lateinit var subtitle: TextView
     private lateinit var status: TextView
+    private lateinit var workChip: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (WorkProfile.isInsideProfile(this)) WorkProfile.setupInsideProfile(this)
         window.statusBarColor = Palette.PRIMARY_DARK
         setContentView(buildUi())
         Engine.onReady { ui.post { refresh() } }
@@ -178,6 +180,12 @@ class MainActivity : Activity() {
         header.addView(tv("একই অ্যাপ, আলাদা অ্যাকাউন্ট", 14f, Color.parseColor("#E0DDFF")))
         subtitle = tv("", 13f, Color.WHITE).apply { setPadding(0, dp(10), 0, 0) }
         header.addView(subtitle)
+        workChip = tv("💼 Work profile", 13f, Color.WHITE, bold = true).apply {
+            background = roundBg(Color.argb(60, 255, 255, 255), 14)
+            setPadding(dp(12), dp(6), dp(12), dp(6))
+            setOnClickListener { onWorkChip() }
+        }
+        header.addView(workChip, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply { topMargin = dp(10) })
         column.addView(header, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
 
         status = tv("", 14f, Palette.TEXT, bold = true).apply {
@@ -230,6 +238,7 @@ class MainActivity : Activity() {
     }
 
     private fun render(items: List<CloneItem>) {
+        updateWorkChip()
         subtitle.text = if (items.isEmpty()) "কোনো ক্লোন নেই" else "📦 মোট ক্লোন: ${items.size}"
         list.removeAllViews()
         if (items.isEmpty()) {
@@ -297,9 +306,67 @@ class MainActivity : Activity() {
     }
 
     private fun openClone(item: CloneItem) {
+        val options = arrayOf("🌀 BlackBox (ভার্চুয়াল স্পেস)", "💼 Work profile")
+        AlertDialog.Builder(this)
+            .setTitle("▶️ ${item.label} কোথায় খুলবেন?")
+            .setItems(options) { _, which ->
+                if (which == 0) openInBlackBox(item) else openInWorkProfile(item)
+            }
+            .setNegativeButton("বাতিল", null)
+            .show()
+    }
+
+    private fun openInBlackBox(item: CloneItem) {
         Engine.io.execute {
             val ok = Engine.launch(item.packageName, item.userId)
             if (!ok) ui.post { toast("❌ অ্যাপটি খোলা যায়নি") }
+        }
+    }
+
+    private fun openInWorkProfile(item: CloneItem) {
+        when {
+            WorkProfile.isInsideProfile(this) -> toast("এটা ইতিমধ্যে Work profile-এর ভেতরে চলছে")
+            !WorkProfile.exists(this) -> onWorkChip()
+            else -> if (!WorkProfile.openInWork(this, item.packageName)) {
+                toast("❌ Work profile-এ খোলা যায়নি (সেটআপ সম্পূর্ণ হয়নি)")
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------ work profile
+
+    private fun updateWorkChip() {
+        workChip.text = when {
+            WorkProfile.isInsideProfile(this) -> "💼 Work profile-এর ভেতরে"
+            WorkProfile.exists(this) -> "💼 Work profile: চালু ✅"
+            WorkProfile.isSupported(this) -> "💼 Work profile তৈরি করুন"
+            else -> "💼 Work profile: সাপোর্ট নেই"
+        }
+    }
+
+    private fun onWorkChip() {
+        when {
+            WorkProfile.isInsideProfile(this) ->
+                toast("এই কপি Work profile-এর ভেতরে। অ্যাপ ক্লোন/খোলা মূল (Personal) কপি থেকে করুন।")
+            WorkProfile.exists(this) ->
+                toast("💼 Work profile চালু আছে। ▶️ চেপে অ্যাপ সেখানে খুলুন।")
+            !WorkProfile.isSupported(this) ->
+                toast("❌ এই ফোনে Work profile তৈরি করা যাচ্ছে না (ডিভাইস সাপোর্ট করে না বা আগে থেকেই অন্য Work profile আছে)")
+            else -> confirm(
+                "💼 Work profile তৈরি করবেন?",
+                "ফোনে একটি আলাদা Work profile তৈরি হবে এবং Parallel-এর একটি কপি সেখানে বসবে। " +
+                    "এরপর ▶️ চেপে \"Work profile\" বেছে নিলে অ্যাপ ওই আলাদা প্রোফাইলে (আলাদা ডেটা/অ্যাকাউন্টসহ) খুলবে।"
+            ) {
+                if (!WorkProfile.startCreate(this)) toast("❌ সিস্টেম Work profile সেটআপ খুলতে পারেনি")
+            }
+        }
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == WorkProfile.REQ_PROVISION) {
+            toast(if (resultCode == RESULT_OK) "✅ Work profile তৈরি হচ্ছে/হয়েছে" else "Work profile তৈরি বাতিল হয়েছে")
+            ui.postDelayed({ updateWorkChip() }, 2500)
         }
     }
 
