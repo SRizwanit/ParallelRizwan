@@ -81,12 +81,25 @@ class MainActivity : Activity() {
         return l
     }
 
+    /** False when the user denied POST_NOTIFICATIONS or switched the app's notifications off. */
+    private fun notificationsAllowed(): Boolean {
+        if (Build.VERSION.SDK_INT < 26) return true
+        return try {
+            if (Build.VERSION.SDK_INT >= 33 &&
+                checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+            ) return false
+            (getSystemService(NOTIFICATION_SERVICE) as android.app.NotificationManager).areNotificationsEnabled()
+        } catch (e: Throwable) {
+            true
+        }
+    }
+
     private fun missing(list: List<String>): Array<String> =
         list.filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }.toTypedArray()
 
-    /** Step 0: normal runtime permissions -> 1: background location -> 2: all-files access -> 3: overlay. */
+    /** Step 0: normal runtime permissions -> 1: background location -> 2: all-files access -> 3: overlay -> 4: notifications on. */
     private fun nextPermissionStep() {
-        while (permStep < 4) {
+        while (permStep < 5) {
             val step = permStep++
             when (step) {
                 0 -> {
@@ -111,6 +124,16 @@ class MainActivity : Activity() {
                     } catch (e: Throwable) { }
                     return
                 }
+                // needed so the "app is not running" notification (tap = destroy app) can be shown
+                4 -> if (!notificationsAllowed()) {
+                    try {
+                        startActivity(
+                            Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                                .putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+                        )
+                    } catch (e: Throwable) { }
+                    return
+                }
             }
         }
     }
@@ -124,7 +147,7 @@ class MainActivity : Activity() {
 
     override fun onPause() {
         super.onPause()
-        if (permStep in 3..4) pausedForSettings = true
+        if (permStep in 3..5) pausedForSettings = true
     }
 
     override fun onResume() {

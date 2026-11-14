@@ -8,6 +8,7 @@ import android.os.Bundle;
 import android.os.IBinder;
 import android.os.Process;
 import android.os.RemoteException;
+import android.os.SystemClock;
 import android.util.Log;
 
 import java.io.File;
@@ -27,6 +28,8 @@ import top.niunaijun.blackbox.core.system.pm.BPackageManagerService;
 import top.niunaijun.blackbox.core.system.user.BUserHandle;
 import top.niunaijun.blackbox.entity.AppConfig;
 import top.niunaijun.blackbox.proxy.ProxyManifest;
+import top.niunaijun.blackbox.utils.AppFailureNotifier;
+import top.niunaijun.blackbox.utils.BlackScreenWatchdog;
 import top.niunaijun.blackbox.utils.FileUtils;
 import top.niunaijun.blackbox.utils.Slog;
 import top.niunaijun.blackbox.utils.compat.ApplicationThreadCompat;
@@ -35,6 +38,41 @@ import top.niunaijun.blackbox.utils.provider.ProviderCall;
 
 
 public class BProcessManagerService implements ISystemService {
+
+    /** A main app process that dies this soon after it started (and nobody killed it) is reported. */
+    private static final long EARLY_DEATH_MS = 20000;
+    private final Set<Integer> mIntentionalKills = new HashSet<>();
+
+    private void markIntentional(int pid) {
+        if (pid <= 0) return;
+        synchronized (mIntentionalKills) {
+            mIntentionalKills.add(pid);
+        }
+    }
+
+    private boolean consumeIntentional(int pid) {
+        synchronized (mIntentionalKills) {
+            return mIntentionalKills.remove(pid);
+        }
+    }
+
+    private void reportEarlyDeath(final ProcessRecord app, final int pid, final long lived) {
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    // give the app's own crash report (if any) time to show first
+                    Thread.sleep(1500);
+                    String detail = "প্রসেস চালুর " + (lived / 1000) + " সেকেন্ডের মধ্যেই বন্ধ হয়ে গেছে।\n"
+                            + BlackScreenWatchdog.memoryInfo();
+                    AppFailureNotifier.reportIfNotShown(BlackBoxCore.getContext(), app.getPackageName(),
+                            app.userId, pid, "অ্যাপ হঠাৎ বন্ধ হয়ে গেছে (নেটিভ ক্র্যাশ বা RAM কম)", detail);
+                } catch (Throwable ignored) {
+                }
+            }
+        }, "bb-early-death").start();
+    }
+
     public static final String TAG = "BProcessManager";
 
     public static BProcessManagerService sBProcessManagerService = new BProcessManagerService();
@@ -168,12 +206,20 @@ public class BProcessManagerService implements ISystemService {
             app.kill();
             return;
         }
+        final long startedAt = SystemClock.uptimeMillis();
+        final int startedPid = app.pid;
         try {
             appThread.linkToDeath(new IBinder.DeathRecipient() {
                 @Override
                 public void binderDied() {
                     Log.d(TAG, "App Died: " + app.processName);
                     appThread.unlinkToDeath(this, 0);
+                    long lived = SystemClock.uptimeMillis() - startedAt;
+                    boolean intentional = consumeIntentional(startedPid);
+                    if (!intentional && lived < EARLY_DEATH_MS
+                            && app.processName != null && app.processName.equals(app.getPackageName())) {
+                        reportEarlyDeath(app, startedPid, lived);
+                    }
                     onProcessDie(app);
                 }
             }, 0);
@@ -227,6 +273,7 @@ public class BProcessManagerService implements ISystemService {
                     if (appId == appId1) {
                         mProcessMap.remove(processRecord.buid);
                         tmp.remove(processRecord);
+                        markIntentional(processRecord.pid);
                         processRecord.kill();
                     }
                 }
@@ -243,6 +290,7 @@ public class BProcessManagerService implements ISystemService {
             if (process == null)
                 return;
             for (ProcessRecord value : process.values()) {
+                markIntentional(value.pid);
                 value.kill();
                 mPidsSelfLocked.remove(value);
             }

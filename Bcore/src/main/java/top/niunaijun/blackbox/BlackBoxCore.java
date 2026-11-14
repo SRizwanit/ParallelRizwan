@@ -58,6 +58,7 @@ import top.niunaijun.blackbox.fake.hook.HookManager;
 import top.niunaijun.blackbox.proxy.ProxyManifest;
 import top.niunaijun.blackbox.utils.FileUtils;
 import top.niunaijun.blackbox.utils.ShellUtils;
+import top.niunaijun.blackbox.utils.AppFailureNotifier;
 import top.niunaijun.blackbox.utils.Slog;
 import top.niunaijun.blackbox.utils.SimpleCrashFix;
 import top.niunaijun.blackbox.utils.compat.BuildCompat;
@@ -1117,10 +1118,21 @@ public class BlackBoxCore extends ClientConfiguration {
 
         Intent launchIntentForPackage = getBPackageManager().getLaunchIntentForPackage(packageName, userId);
         if (launchIntentForPackage == null) {
+            reportAppFailure(packageName, userId, "অ্যাপ চালু করা যায়নি: কোনো লঞ্চার Activity পাওয়া যায়নি", "");
             return false;
         }
         startActivity(launchIntentForPackage, userId);
         return true;
+    }
+
+    /** Fully closes (destroys) a cloned app. */
+    public void killApp(String packageName, int userId) {
+        AppFailureNotifier.killApp(getContext(), packageName, userId, -1);
+    }
+
+    /** Shows the "why is this app not running" dialog + Exit notification for a cloned app. */
+    public void reportAppFailure(String packageName, int userId, String reason, String detail) {
+        AppFailureNotifier.report(getContext(), packageName, userId, -1, reason, detail, true);
     }
     public boolean isInstalled(String packageName, int userId) {
         return getBPackageManager().isInstalled(packageName, userId);

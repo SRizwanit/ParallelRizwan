@@ -79,6 +79,7 @@ import top.niunaijun.blackbox.fake.service.HCallbackProxy;
 import top.niunaijun.blackbox.utils.Reflector;
 import top.niunaijun.blackbox.utils.SafeContextWrapper;
 import top.niunaijun.blackbox.utils.GlobalContextWrapper;
+import top.niunaijun.blackbox.utils.BlackScreenWatchdog;
 import top.niunaijun.blackbox.utils.Slog;
 import top.niunaijun.blackbox.utils.compat.ActivityManagerCompat;
 import top.niunaijun.blackbox.utils.compat.BuildCompat;
@@ -477,6 +478,24 @@ public class BActivityThread extends IBActivityThread.Stub {
             onBeforeApplicationOnCreate(packageName, processName, application);
             AppInstrumentation.get().callApplicationOnCreate(application);
             onAfterApplicationOnCreate(packageName, processName, application);
+
+            // black-screen / hang watchdog (only reports when an Activity exists but never draws)
+            try {
+                BlackScreenWatchdog.install(application, packageName, getUserId(),
+                        new BlackScreenWatchdog.UiProbe() {
+                            @Override
+                            public boolean hasActivities() {
+                                try {
+                                    Map<IBinder, Object> m = BRActivityThread.get(BlackBoxCore.mainThread()).mActivities();
+                                    return m != null && !m.isEmpty();
+                                } catch (Throwable t) {
+                                    return false;
+                                }
+                            }
+                        });
+            } catch (Throwable t) {
+                Slog.w(TAG, "BlackScreenWatchdog install failed: " + t.getMessage());
+            }
 
             HookManager.get().checkEnv(HCallbackProxy.class);
         } catch (Exception e) {

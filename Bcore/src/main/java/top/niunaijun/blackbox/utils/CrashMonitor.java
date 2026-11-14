@@ -7,6 +7,7 @@ import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.Process;
 
 import java.io.File;
 import java.io.FileWriter;
@@ -22,6 +23,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import top.niunaijun.blackbox.BlackBoxCore;
 import top.niunaijun.blackbox.app.BActivityThread;
+import top.niunaijun.blackbox.utils.AppFailureNotifier;
 
 
 public class CrashMonitor {
@@ -251,9 +253,52 @@ public class CrashMonitor {
             
             
             writeCrashLog(crashInfo);
+
+            reportFatal(crashType, thread, throwable);
             
         } catch (Exception e) {
             Slog.e(TAG, "Error handling crash: " + e.getMessage());
+        }
+    }
+    
+    /**
+     * A dead main thread leaves the cloned app as a frozen black screen (the crash is swallowed
+     * by our handler). Tell the user why, then close the process. Host process is left untouched.
+     */
+    private static void reportFatal(String crashType, Thread thread, Throwable throwable) {
+        try {
+            if (BActivityThread.getAppConfig() == null) return;
+            boolean mainDead = "JavaException".equals(crashType) && thread != null
+                    && thread == Looper.getMainLooper().getThread();
+            boolean nativeCrash = "NativeCrash".equals(crashType);
+            if (!mainDead && !nativeCrash) return;
+
+            String reason = mainDead ? "অ্যাপ ক্র্যাশ করেছে (মূল থ্রেড বন্ধ হয়ে গেছে)" : "নেটিভ ক্র্যাশ হয়েছে";
+            StringBuilder detail = new StringBuilder();
+            if (throwable != null) {
+                detail.append(throwable.getClass().getSimpleName());
+                if (throwable.getMessage() != null) detail.append(": ").append(throwable.getMessage());
+            }
+            String mem = BlackScreenWatchdog.memoryInfo();
+            if (!mem.isEmpty()) detail.append(detail.length() > 0 ? "\n" : "").append(mem);
+
+            AppFailureNotifier.report(BlackBoxCore.getContext(), BActivityThread.getAppPackageName(),
+                    BActivityThread.getUserId(), Process.myPid(), reason, detail.toString(), true);
+
+            if (mainDead) {
+                new Thread(new Runnable() {
+                    @Override
+                    public void run() {
+                        try {
+                            Thread.sleep(3000);
+                        } catch (InterruptedException ignored) {
+                        }
+                        Process.killProcess(Process.myPid());
+                    }
+                }, "bb-fatal").start();
+            }
+        } catch (Throwable t) {
+            Slog.w(TAG, "reportFatal failed: " + t.getMessage());
         }
     }
     

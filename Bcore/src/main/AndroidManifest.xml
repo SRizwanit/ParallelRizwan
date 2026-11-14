@@ -531,6 +531,21 @@
             android:excludeFromRecents="true"
             android:theme="@style/LauncherTheme" />
 
+        <!-- "why is this app not running" dialog (Exit button) -->
+        <activity
+            android:name=".app.AppFailureActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:launchMode="singleTop"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
+        <!-- notification tap / Exit => destroy the cloned app -->
+        <receiver
+            android:name=".proxy.AppKillReceiver"
+            android:enabled="true"
+            android:exported="false" />
+
         <service
             android:name="top.niunaijun.blackbox.proxy.ProxyVpnService"
             android:enabled="true"

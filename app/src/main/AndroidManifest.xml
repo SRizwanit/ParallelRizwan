@@ -107,6 +107,7 @@
 
         <activity
             android:name=".FreezeDialogActivity"
+            tools:ignore="MissingClass"
             android:exported="false"
             android:excludeFromRecents="true"
             android:taskAffinity=""
