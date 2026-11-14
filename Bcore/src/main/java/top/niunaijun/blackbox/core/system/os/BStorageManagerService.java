@@ -21,6 +21,9 @@ import top.niunaijun.blackbox.utils.compat.BuildCompat;
 public class BStorageManagerService extends IBStorageManagerService.Stub implements ISystemService {
     private static final BStorageManagerService sService = new BStorageManagerService();
 
+    /** Old behaviour (true) hid the real volume paths from the cloned app. Set true to restore it. */
+    private static final boolean REWRITE_VOLUME_PATH = false;
+
     public static BStorageManagerService get() {
         return sService;
     }
@@ -37,10 +40,16 @@ public class BStorageManagerService extends IBStorageManagerService.Stub impleme
             StorageVolume[] storageVolumes = BRStorageManager.get().getVolumeList(BUserHandle.getUserId(Process.myUid()), 0);
             if (storageVolumes == null)
                 return null;
-            for (StorageVolume storageVolume : storageVolumes) {
-                BRStorageVolume.get(storageVolume)._set_mPath(BEnvironment.getExternalUserDir(userId));
-                if (BuildCompat.isPie()) {
-                    BRStorageVolume.get(storageVolume)._set_mInternalPath(BEnvironment.getExternalUserDir(userId));
+            // Rewriting the volume paths to the virtual dir makes lookups of the REAL path
+            // (e.g. "Failed to find storage device at /storage/emulated/0", seen in Facebook Lite)
+            // fail, because no volume matches it any more. File access under /storage/emulated/N
+            // and /sdcard is already redirected natively by IOCore, so the real paths are safe.
+            if (REWRITE_VOLUME_PATH) {
+                for (StorageVolume storageVolume : storageVolumes) {
+                    BRStorageVolume.get(storageVolume)._set_mPath(BEnvironment.getExternalUserDir(userId));
+                    if (BuildCompat.isPie()) {
+                        BRStorageVolume.get(storageVolume)._set_mInternalPath(BEnvironment.getExternalUserDir(userId));
+                    }
                 }
             }
             return storageVolumes;
