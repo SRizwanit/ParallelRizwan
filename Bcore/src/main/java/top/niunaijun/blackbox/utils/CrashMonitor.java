@@ -217,6 +217,19 @@ public class CrashMonitor {
     }
     
     
+    private static void logLong(String text) {
+        try {
+            if (text == null) return;
+            int i = 0;
+            while (i < text.length()) {
+                int end = Math.min(text.length(), i + 3500);
+                Slog.e(TAG, text.substring(i, end));
+                i = end;
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
     public static void handleCrash(String crashType, Thread thread, Throwable throwable) {
         try {
             sTotalCrashes.incrementAndGet();
@@ -233,6 +246,8 @@ public class CrashMonitor {
             
             
             Slog.w(TAG, "Crash detected: " + crashInfo);
+            // print the REAL stack trace to logcat too (this handler swallows the normal FATAL EXCEPTION print)
+            logLong("Uncaught exception in thread \"" + (thread != null ? thread.getName() : "?") + "\":\n" + crashInfo.stackTrace);
             
             
             String crashKey = crashType + "_" + System.currentTimeMillis();

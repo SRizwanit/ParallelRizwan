@@ -31,6 +31,32 @@ public final class FailureLog {
     private FailureLog() {
     }
 
+    /** Newest CrashMonitor file (has the full Java stack trace), if written in the last 3 minutes. */
+    private static String newestCrashFile(Context ctx) {
+        try {
+            File dir = new File(ctx.getFilesDir(), "crash_logs");
+            File[] fs = dir.listFiles();
+            if (fs == null || fs.length == 0) return null;
+            File best = null;
+            for (File f : fs) {
+                if (best == null || f.lastModified() > best.lastModified()) best = f;
+            }
+            if (best == null || System.currentTimeMillis() - best.lastModified() > 3 * 60 * 1000L) return null;
+            java.io.FileInputStream in = new java.io.FileInputStream(best);
+            java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream();
+            try {
+                byte[] buf = new byte[8192];
+                int n;
+                while ((n = in.read(buf)) > 0 && bo.size() < 60 * 1024) bo.write(buf, 0, n);
+            } finally {
+                in.close();
+            }
+            return best.getName() + "\n" + bo.toString("UTF-8");
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
     /** Writes the full log to cache/bb_last_failure.log and returns a short summary of the key error lines (or null). */
     public static String capture(Context ctx, String pkg, int userId, int pid, String osReason, long livedMs) {
         List<String> kept = new ArrayList<>();
@@ -85,6 +111,22 @@ public final class FailureLog {
         sb.append("=== মূল error লাইন (বাছাই) ===\n");
         if (key.isEmpty()) sb.append("(কোনো crash লাইন পাওয়া যায়নি)\n");
         for (String k : key) sb.append(k).append('\n');
+        String crashFile = newestCrashFile(ctx);
+        String stackHead = null;
+        if (crashFile != null) {
+            sb.append("\n=== CrashMonitor ফাইল (আসল Java stack trace) ===\n").append(crashFile).append('\n');
+            int at = crashFile.indexOf("=== STACK TRACE ===");
+            if (at >= 0) {
+                String[] ls = crashFile.substring(at + 19).trim().split("\n");
+                StringBuilder h = new StringBuilder();
+                for (int i = 0; i < ls.length && i < 7; i++) {
+                    String x = ls[i];
+                    if (x.length() > 170) x = x.substring(0, 170) + "…";
+                    h.append(x).append('\n');
+                }
+                stackHead = h.toString().trim();
+            }
+        }
         sb.append("\n=== পুরো লগ (এই অ্যাপ/প্রসেস সংক্রান্ত) ===\n");
         StringBuilder body = new StringBuilder();
         for (String l : kept) body.append(l).append('\n');
@@ -103,8 +145,9 @@ public final class FailureLog {
             Slog.w(TAG, "write failed: " + t.getMessage());
         }
 
-        if (key.isEmpty()) return null;
+        if (key.isEmpty() && stackHead == null) return null;
         StringBuilder sum = new StringBuilder();
+        if (stackHead != null) sum.append("Java exception:\n").append(stackHead).append("\n\n");
         int from = Math.max(0, key.size() - 6);
         for (int i = from; i < key.size(); i++) {
             String s = key.get(i);
