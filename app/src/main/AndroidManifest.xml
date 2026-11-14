@@ -105,5 +105,13 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".FreezeDialogActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:launchMode="singleTask"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
     </application>
 </manifest>
