@@ -11,6 +11,7 @@ import android.os.Bundle;
 import android.widget.Toast;
 
 import top.niunaijun.blackbox.utils.AppFailureNotifier;
+import top.niunaijun.blackbox.utils.FailureLog;
 
 /** Dialog: "why is this app not running" + Exit button. Runs in the host main process. */
 public class AppFailureActivity extends Activity {
@@ -86,9 +87,13 @@ public class AppFailureActivity extends Activity {
         mDialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener(v -> {
             try {
                 ClipboardManager cm = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
-                cm.setPrimaryClip(ClipData.newPlainText("app-failure",
-                        (pkg + " u" + userId + "\n" + (detail == null ? "" : detail))));
-                Toast.makeText(this, "কপি হয়েছে", Toast.LENGTH_SHORT).show();
+                StringBuilder all = new StringBuilder();
+                all.append(pkg).append(" u").append(userId).append('\n');
+                if (detail != null) all.append(detail).append('\n');
+                String full = FailureLog.read(getApplicationContext(), pkg);
+                if (full != null) all.append("\n========== ORIGINAL ERROR LOG ==========\n").append(full);
+                cm.setPrimaryClip(ClipData.newPlainText("app-failure", all.toString()));
+                Toast.makeText(this, "কপি হয়েছে (original error লগসহ)", Toast.LENGTH_SHORT).show();
             } catch (Throwable ignored) {
             }
         });

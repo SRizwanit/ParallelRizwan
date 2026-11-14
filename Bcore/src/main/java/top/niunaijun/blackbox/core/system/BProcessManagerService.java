@@ -31,6 +31,7 @@ import top.niunaijun.blackbox.entity.AppConfig;
 import top.niunaijun.blackbox.proxy.ProxyManifest;
 import top.niunaijun.blackbox.utils.AppFailureNotifier;
 import top.niunaijun.blackbox.utils.BlackScreenWatchdog;
+import top.niunaijun.blackbox.utils.FailureLog;
 import top.niunaijun.blackbox.utils.FileUtils;
 import top.niunaijun.blackbox.utils.Slog;
 import top.niunaijun.blackbox.utils.compat.ApplicationThreadCompat;
@@ -64,19 +65,28 @@ public class BProcessManagerService implements ISystemService {
                 try {
                     // give the app's own crash report (if any) time to show first
                     Thread.sleep(1500);
+                    Context ctx = BlackBoxCore.getContext();
                     String reason = "অ্যাপ হঠাৎ বন্ধ হয়ে গেছে";
                     String exitInfo = null;
                     // Android 11+: ask the OS for the REAL exit reason (native crash / signal / self exit / low memory ...)
                     for (int i = 0; i < 4 && exitInfo == null; i++) {
-                        exitInfo = queryExitReason(pid);
+                        exitInfo = queryExitReason(pid, lived);
                         if (exitInfo == null) Thread.sleep(700);
                     }
-                    String detail = "প্রসেস চালুর " + (lived / 1000) + " সেকেন্ডের মধ্যেই বন্ধ হয়ে গেছে।\n"
-                            + (exitInfo != null ? "আসল কারণ (OS): " + exitInfo + "\n"
-                            : "আসল কারণ জানা যায়নি (Android 11-এর নিচে, বা OS তথ্য দেয়নি)।\n")
-                            + BlackScreenWatchdog.memoryInfo();
+                    // the ORIGINAL error text from logcat (saved to a file; "লগ কপি" copies it)
+                    String logSummary = FailureLog.capture(ctx, app.getPackageName(), app.userId, pid, exitInfo, lived);
+
+                    StringBuilder d = new StringBuilder();
+                    d.append("প্রসেস চালুর ").append(lived / 1000).append(" সেকেন্ডের মধ্যেই বন্ধ হয়ে গেছে।\n");
+                    d.append(exitInfo != null ? "আসল কারণ (OS): " + exitInfo
+                            : "OS কারণ জানায়নি (Android 11-এর নিচে বা তথ্য নেই)");
+                    d.append('\n');
+                    if (logSummary != null) d.append("\nমূল error:\n").append(logSummary).append('\n');
+                    d.append('\n').append(BlackScreenWatchdog.memoryInfo());
+                    d.append("\n\n(\"লগ কপি\" চাপলে পুরো original error লগ কপি হবে)");
+                    String detail = d.toString();
                     Slog.w(TAG, "early death pid=" + pid + " pkg=" + app.getPackageName() + " : " + detail);
-                    AppFailureNotifier.reportIfNotShown(BlackBoxCore.getContext(), app.getPackageName(),
+                    AppFailureNotifier.reportIfNotShown(ctx, app.getPackageName(),
                             app.userId, pid, reason, detail);
                 } catch (Throwable ignored) {
                 }
@@ -85,16 +95,30 @@ public class BProcessManagerService implements ISystemService {
     }
 
     /** Returns a human-readable exit reason for the host process with this pid, or null. */
-    private static String queryExitReason(int pid) {
+    private static String queryExitReason(int pid, long lived) {
         if (Build.VERSION.SDK_INT < 30) return null;
         try {
             Context c = BlackBoxCore.getContext();
             ActivityManager am = (ActivityManager) c.getSystemService(Context.ACTIVITY_SERVICE);
             List<android.app.ApplicationExitInfo> list =
-                    am.getHistoricalProcessExitReasons(c.getPackageName(), pid, 1);
+                    am.getHistoricalProcessExitReasons(c.getPackageName(), 0, 8);
             if (list == null || list.isEmpty()) return null;
-            android.app.ApplicationExitInfo e = list.get(0);
-            if (e.getPid() != pid) return null;
+            android.app.ApplicationExitInfo e = null;
+            if (pid > 0) {
+                for (android.app.ApplicationExitInfo x : list) {
+                    if (x.getPid() == pid) { e = x; break; }
+                }
+            }
+            if (e == null) {
+                // pid unknown/not matched: take the newest recent exit of one of our :pN client processes
+                long now = System.currentTimeMillis();
+                for (android.app.ApplicationExitInfo x : list) {
+                    String pn = x.getProcessName();
+                    if (pn != null && pn.startsWith(c.getPackageName() + ":p")
+                            && now - x.getTimestamp() < lived + 30000L) { e = x; break; }
+                }
+            }
+            if (e == null) return null;
             String name;
             String hint = "";
             int st = e.getStatus();
@@ -277,7 +301,6 @@ public class BProcessManagerService implements ISystemService {
             return;
         }
         final long startedAt = SystemClock.uptimeMillis();
-        final int startedPid = app.pid;
         try {
             appThread.linkToDeath(new IBinder.DeathRecipient() {
                 @Override
@@ -285,10 +308,13 @@ public class BProcessManagerService implements ISystemService {
                     Log.d(TAG, "App Died: " + app.processName);
                     appThread.unlinkToDeath(this, 0);
                     long lived = SystemClock.uptimeMillis() - startedAt;
-                    boolean intentional = consumeIntentional(startedPid);
+                    // NOTE: app.pid is only assigned AFTER attachClientL() returns, so it must be read
+                    // here (at death time), not captured earlier (that was always 0).
+                    int deadPid = app.pid;
+                    boolean intentional = consumeIntentional(deadPid);
                     if (!intentional && lived < EARLY_DEATH_MS
                             && app.processName != null && app.processName.equals(app.getPackageName())) {
-                        reportEarlyDeath(app, startedPid, lived);
+                        reportEarlyDeath(app, deadPid, lived);
                     }
                     onProcessDie(app);
                 }
