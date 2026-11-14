@@ -8,8 +8,8 @@ plugins {
 }
 
 ext {
-    compileSdkVersion = 35
-    targetSdkVersion = 28      // BlackBox works best with targetSdk <= 28
+    compileSdkVersion = 37
+    targetSdkVersion = 37
     minSdk = 21
     ndkVer = "29.0.13846066"
 }

@@ -80,7 +80,12 @@ object Engine {
     fun clone(pkg: String): String? {
         var space = -1
         for (i in 0 until MAX_SPACES) {
-            val used = try { core.isInstalled(pkg, i) } catch (e: Throwable) { false }
+            // NOTE: core.isInstalled() falls back to the HOST package manager when the engine
+            // service is not ready, and then answers "true" for every space (=> false "max 10"
+            // error). So we ask the engine's own per-space app list instead.
+            val used = try {
+                core.getInstalledApplications(0, i)?.any { it.packageName == pkg } ?: false
+            } catch (e: Throwable) { false }
             if (!used) { space = i; break }
         }
         if (space < 0) return "সর্বোচ্চ $MAX_SPACES টি কপি তৈরি করা যায়"

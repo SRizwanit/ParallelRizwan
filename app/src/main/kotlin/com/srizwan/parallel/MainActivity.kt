@@ -1,7 +1,14 @@
 package com.srizwan.parallel
 
 import android.app.Activity
+import android.Manifest
 import android.app.AlertDialog
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.provider.Settings
 import android.graphics.Color
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
@@ -35,6 +42,97 @@ class MainActivity : Activity() {
         setContentView(buildUi())
         Engine.onReady { ui.post { refresh() } }
         refresh()
+        permStep = 0
+        nextPermissionStep()
+    }
+
+    // ------------------------------------------------------------------ permissions
+
+    private var permStep = 0
+
+    private fun runtimePermissions(): List<String> {
+        val l = ArrayList<String>()
+        l += listOf(
+            Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO,
+            Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION,
+            Manifest.permission.READ_CONTACTS, Manifest.permission.WRITE_CONTACTS, Manifest.permission.GET_ACCOUNTS,
+            Manifest.permission.READ_CALENDAR, Manifest.permission.WRITE_CALENDAR,
+            Manifest.permission.READ_PHONE_STATE, Manifest.permission.CALL_PHONE,
+            Manifest.permission.READ_CALL_LOG, Manifest.permission.WRITE_CALL_LOG,
+            Manifest.permission.READ_SMS, Manifest.permission.SEND_SMS,
+            Manifest.permission.RECEIVE_SMS, Manifest.permission.RECEIVE_MMS
+        )
+        if (Build.VERSION.SDK_INT < 33) {
+            l += listOf(Manifest.permission.READ_EXTERNAL_STORAGE, Manifest.permission.WRITE_EXTERNAL_STORAGE)
+        }
+        if (Build.VERSION.SDK_INT >= 26) l += Manifest.permission.READ_PHONE_NUMBERS
+        if (Build.VERSION.SDK_INT >= 26) l += Manifest.permission.ANSWER_PHONE_CALLS
+        if (Build.VERSION.SDK_INT >= 29) l += Manifest.permission.ACTIVITY_RECOGNITION
+        if (Build.VERSION.SDK_INT >= 31) l += listOf(
+            Manifest.permission.BLUETOOTH_CONNECT, Manifest.permission.BLUETOOTH_SCAN,
+            Manifest.permission.BLUETOOTH_ADVERTISE
+        )
+        if (Build.VERSION.SDK_INT >= 33) l += listOf(
+            Manifest.permission.POST_NOTIFICATIONS, Manifest.permission.NEARBY_WIFI_DEVICES,
+            Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VIDEO,
+            Manifest.permission.READ_MEDIA_AUDIO
+        )
+        if (Build.VERSION.SDK_INT >= 34) l += Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED
+        return l
+    }
+
+    private fun missing(list: List<String>): Array<String> =
+        list.filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }.toTypedArray()
+
+    /** Step 0: normal runtime permissions -> 1: background location -> 2: all-files access -> 3: overlay. */
+    private fun nextPermissionStep() {
+        while (permStep < 4) {
+            val step = permStep++
+            when (step) {
+                0 -> {
+                    val m = missing(runtimePermissions())
+                    if (m.isNotEmpty()) { requestPermissions(m, 100); return }
+                }
+                1 -> if (Build.VERSION.SDK_INT >= 29) {
+                    val m = missing(listOf(Manifest.permission.ACCESS_BACKGROUND_LOCATION))
+                    if (m.isNotEmpty()) { requestPermissions(m, 101); return }
+                }
+                2 -> if (Build.VERSION.SDK_INT >= 30 && !Environment.isExternalStorageManager()) {
+                    try {
+                        startActivity(Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, Uri.parse("package:$packageName")))
+                    } catch (e: Throwable) {
+                        try { startActivity(Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)) } catch (e2: Throwable) { }
+                    }
+                    return // continue from onResume() when the user comes back
+                }
+                3 -> if (Build.VERSION.SDK_INT >= 23 && !Settings.canDrawOverlays(this)) {
+                    try {
+                        startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
+                    } catch (e: Throwable) { }
+                    return
+                }
+            }
+        }
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        nextPermissionStep()
+    }
+
+    private var pausedForSettings = false
+
+    override fun onPause() {
+        super.onPause()
+        if (permStep in 3..4) pausedForSettings = true
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (pausedForSettings) {
+            pausedForSettings = false
+            nextPermissionStep()
+        }
     }
 
     // ------------------------------------------------------------------ layout
@@ -86,6 +184,16 @@ class MainActivity : Activity() {
         root.addView(add, FrameLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply {
             bottomMargin = dp(26)
         })
+        root.setOnApplyWindowInsetsListener { _, ins ->
+            @Suppress("DEPRECATION")
+            val top = ins.systemWindowInsetTop
+            @Suppress("DEPRECATION")
+            val bottom = ins.systemWindowInsetBottom
+            header.setPadding(dp(22), dp(26) + top, dp(22), dp(22))
+            (add.layoutParams as FrameLayout.LayoutParams).bottomMargin = dp(26) + bottom
+            add.requestLayout()
+            ins
+        }
         return root
     }
 
