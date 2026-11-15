@@ -3,6 +3,7 @@ package com.srizwan.parallel
 import android.content.pm.ApplicationInfo
 import android.graphics.drawable.Drawable
 import top.niunaijun.blackbox.BlackBoxCore
+import top.niunaijun.blackbox.core.GmsCore
 import top.niunaijun.blackbox.utils.AbiUtils
 import java.io.File
 import java.util.concurrent.Executors
@@ -49,6 +50,12 @@ object Engine {
             val apps = try { core.getInstalledApplications(0, u.id) } catch (e: Throwable) { null } ?: continue
             for (ai in apps) {
                 val pkg = ai.packageName ?: continue
+                // Google Play Services / Play Store / GSF / ConfigUpdater / etc. get
+                // auto-installed into a space as background support for the app the
+                // user actually cloned there (see clone()). They are real, needed
+                // packages, but they are not something the user asked to clone, so
+                // don't show them as their own entries in the clone list.
+                if (GmsCore.isGoogleAppOrService(pkg)) continue
                 out.add(CloneItem(labelOf(ai), iconOf(ai), pkg, u.id))
             }
         }
@@ -137,7 +144,11 @@ object Engine {
                 if (users.isNullOrEmpty()) return
                 val last = users.last().id
                 val apps = core.getInstalledApplications(0, last)
-                if (apps != null && apps.isNotEmpty()) return
+                // Ignore the auto-installed Google support packages here too, otherwise
+                // a space whose real app was removed never gets trimmed because it
+                // still "contains" GMS/Play Store/etc.
+                val realApps = apps?.filter { !GmsCore.isGoogleAppOrService(it.packageName ?: "") }
+                if (!realApps.isNullOrEmpty()) return
                 core.deleteUser(last)
             }
         } catch (e: Throwable) {
