@@ -91,7 +91,24 @@ object Engine {
         if (space < 0) return "সর্বোচ্চ $MAX_SPACES টি কপি তৈরি করা যায়"
         return try {
             val r = core.installPackageAsUser(pkg, space)
-            if (r != null && r.success) null else (r?.msg ?: "ইনস্টল ব্যর্থ হয়েছে")
+            if (r != null && r.success) {
+                // Best-effort: clone (fake) Google Play Services into this space too.
+                // Apps like Facebook Lite fall back to broken/legacy code paths when
+                // they can't find com.google.android.gms (e.g. a PendingIntent created
+                // without FLAG_IMMUTABLE/FLAG_MUTABLE from their Firebase InstanceID
+                // fallback, which throws IllegalArgumentException on Android 12+ and
+                // crashes the whole cloned app). This only works if the HOST device
+                // itself actually has real Google Play Services installed — if not,
+                // isSupportGms() is false and this is a no-op.
+                try {
+                    if (core.isSupportGms() && !core.isInstallGms(space)) {
+                        core.installGms(space)
+                    }
+                } catch (e: Throwable) {
+                    // Non-fatal: the app clone itself already succeeded above.
+                }
+                null
+            } else (r?.msg ?: "ইনস্টল ব্যর্থ হয়েছে")
         } catch (e: Throwable) {
             e.message ?: "ইনস্টল ব্যর্থ হয়েছে"
         }
