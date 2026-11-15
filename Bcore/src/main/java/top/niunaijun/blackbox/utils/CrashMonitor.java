@@ -554,7 +554,12 @@ public class CrashMonitor {
         @Override
         public boolean attemptRecovery(CrashInfo crashInfo) {
             try {
-                
+                // TODO: this is a no-op stub — it unconditionally reports "recovered"
+                // without actually fixing anything (no state reset, no retry, no
+                // classloader/module reload). The crash stats and "Recovery successful"
+                // log lines are therefore misleading. Either implement a real recovery
+                // step here (e.g. reset the offending component / clear bad cached
+                // state) or have this return false so the stats reflect reality.
                 return true; 
             } catch (Exception e) {
                 Slog.w(TAG, "Java exception recovery failed: " + e.getMessage());

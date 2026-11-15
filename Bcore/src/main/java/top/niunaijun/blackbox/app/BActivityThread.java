@@ -652,13 +652,26 @@ public class BActivityThread extends IBActivityThread.Stub {
     
     private ClassLoader getClassLoader(android.content.pm.ApplicationInfo appInfo) {
         try {
-            
+
             String sourceDir = appInfo.sourceDir;
             if (sourceDir != null) {
-                return new dalvik.system.PathClassLoader(sourceDir, ClassLoader.getSystemClassLoader());
+                // IMPORTANT: merge split APK dex paths (App Bundle config/feature splits).
+                // Using only sourceDir drops any classes that ship in a split APK
+                // (common for apps installed from Play Store as Android App Bundles),
+                // which previously caused ClassNotFoundException / NoClassDefFoundError
+                // for classes that only exist in a split (see CrashMonitor logs).
+                StringBuilder dexPath = new StringBuilder(sourceDir);
+                if (appInfo.splitSourceDirs != null) {
+                    for (String split : appInfo.splitSourceDirs) {
+                        if (split != null) {
+                            dexPath.append(File.pathSeparator).append(split);
+                        }
+                    }
+                }
+                return new dalvik.system.PathClassLoader(dexPath.toString(), ClassLoader.getSystemClassLoader());
             }
-            
-            
+
+
             return ClassLoader.getSystemClassLoader();
         } catch (Exception e) {
             Slog.w(TAG, "Error getting class loader: " + e.getMessage());
