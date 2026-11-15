@@ -74,10 +74,24 @@ public class BrowserEngineProxy extends ClassInvocationStub {
     public static class KillProcess extends MethodHook {
         @Override
         protected Object hook(Object who, Method method, Object[] args) throws Throwable {
-            if (args != null && args.length > 0) {
-                int pid = (int) args[0];
-                Slog.d(TAG, "Process.killProcess() called for PID: " + pid);
+            int pid = (args != null && args.length > 0) ? (int) args[0] : -1;
+
+            // Guest apps (e.g. Facebook) sometimes call Process.killProcess(Process.myPid())
+            // on themselves after hitting an internal error or detecting a sandboxed/
+            // virtualized environment (anti-tamper style self-destruct). Previously this
+            // hook only logged the call and then still executed it via method.invoke(),
+            // so the guest app could kill the whole virtualized process even for a
+            // recoverable background-thread error (e.g. the kotlinx-coroutines
+            // ServiceLoader/ClassNotFoundException noise handled by CrashMonitor).
+            // Block self-kills here and let BlackBox's own crash/recovery flow decide
+            // whether the process should actually die.
+            if (pid == Process.myPid()) {
+                Slog.w(TAG, "Blocked self Process.killProcess() call for PID: " + pid
+                        + " (guest app tried to terminate itself)");
+                return null;
             }
+
+            Slog.d(TAG, "Process.killProcess() called for PID: " + pid);
             return method.invoke(who, args);
         }
     }
